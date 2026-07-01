@@ -54,6 +54,8 @@ def create_tasks_table():
     
 
 # Create a new task
+# BUG: No title validation (SPEC says title must be non-empty and <= 200 chars)
+# BUG: Does not return the generated ID (SPEC says response should include id)
 @app.post("/tasks")
 def create_task(task: Task):
     with pyodbc.connect(connection_string) as conn:
@@ -61,6 +63,11 @@ def create_task(task: Task):
         cursor.execute("INSERT INTO Tasks (Title, Description) VALUES (?, ?)", task.title, task.description)
         conn.commit()
     return task
+
+# MISSING: GET /tasks - List all tasks (required by SPEC)
+# MISSING: GET /tasks/{task_id} - Get single task (required by SPEC)
+# MISSING: PUT /tasks/{task_id} - Update task (required by SPEC)
+# MISSING: DELETE /tasks/{task_id} - Delete task (required by SPEC)
 
 if __name__ == "__main__":
     create_tasks_table()

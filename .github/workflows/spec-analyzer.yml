@@ -1,0 +1,40 @@
+# Analyzes whether the code correctly implements SPEC.md
+# Runs on push/PR when Python files or SPEC.md change.
+# Uses GitHub Models (free, no API key needed).
+
+name: "Spec Compliance Check"
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "**.py"
+      - "SPEC.md"
+  pull_request:
+    paths:
+      - "**.py"
+      - "SPEC.md"
+  workflow_dispatch:
+
+jobs:
+  analyze-spec:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      models: read
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run spec compliance check
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SPEC_FILE: "SPEC.md"
+        run: python analyze_spec.py

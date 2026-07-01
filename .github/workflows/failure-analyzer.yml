@@ -1,0 +1,35 @@
+# Analyzes any failed workflow and suggests fixes using AI.
+# Triggers automatically when any workflow fails.
+# Uses GitHub Models (free, no API key needed).
+
+name: "Failure Analyzer"
+
+on:
+  workflow_run:
+    workflows: ["*"]
+    types: [completed]
+
+jobs:
+  analyze:
+    if: ${{ github.event.workflow_run.conclusion == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      models: read
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Analyze failure
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          FAILED_RUN_ID: ${{ github.event.workflow_run.id }}
+          LLM_PROVIDER: "github_models"
+        run: python analyze_failure.py
