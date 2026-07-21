@@ -1,0 +1,32 @@
+# Auto-Fix: Reads AI suggestions from the last failed Spec Compliance Check,
+# generates fixed code, and creates a Pull Request.
+# Triggered manually via the "Run workflow" button in Actions tab.
+
+name: "Auto-Fix (AI)"
+
+on:
+  workflow_dispatch:
+
+jobs:
+  auto-fix:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: write
+      pull-requests: write
+      models: read
+
+    steps:
+      - name: Checkout repo
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Run auto-fix
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          SPEC_FILE: "SPEC.md"
+        run: python auto_fix.py

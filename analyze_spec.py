@@ -1,8 +1,8 @@
 """
-Code vs Spec Analyzer
-======================
-Reads SPEC.md and all Python source files, sends them to GitHub Models (free),
-and reports whether the code correctly implements the spec.
+Code vs Spec Analyzer (Language-Agnostic)
+==========================================
+Reads SPEC.md and all source code files (any language), sends them to
+GitHub Models (free), and reports whether the code correctly implements the spec.
 
 Outputs a detailed compliance report to GitHub Actions step summary.
 """
@@ -49,28 +49,62 @@ def read_file(path):
         return None
 
 
+# Code file extensions to scan (language-agnostic)
+CODE_EXTENSIONS = {
+    ".py", ".js", ".ts", ".jsx", ".tsx", ".java", ".go", ".rb", ".php",
+    ".cs", ".cpp", ".c", ".h", ".rs", ".swift", ".kt", ".scala",
+    ".tf", ".hcl", ".yaml", ".yml", ".json", ".toml",
+    ".html", ".css", ".scss", ".sql", ".sh", ".bash",
+    ".r", ".dart", ".lua", ".ex", ".exs", ".vue", ".svelte",
+}
+
+# Directories to skip
+SKIP_DIRS = {
+    "node_modules", ".git", "__pycache__", "venv", ".venv", "env",
+    ".env", "dist", "build", ".next", ".nuxt", "vendor", "target",
+    ".terraform", ".idea", ".vscode", "coverage", "bin", "obj",
+}
+
+# Files to skip
+SKIP_FILES = {"analyze_spec.py", "analyze_failure.py", "auto_fix.py"}
+
+
 def find_source_files():
-    """Find all Python source files (excluding tests and this script)."""
+    """Find all source code files (any language), excluding tests and analyzers."""
     files = {}
-    for py_file in glob.glob("**/*.py", recursive=True):
-        # Skip test files, this analyzer, the failure analyzer, and venv
-        if any(skip in py_file for skip in ["test_", "analyze_", "venv/", ".venv/", "__pycache__"]):
-            continue
-        content = read_file(py_file)
-        if content:
-            files[py_file] = content
+    for root, dirs, filenames in os.walk("."):
+        # Skip junk directories
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for fname in filenames:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in CODE_EXTENSIONS:
+                continue
+            if fname in SKIP_FILES:
+                continue
+            # Skip test files for separate collection
+            if fname.startswith("test_") or fname.endswith("_test.py") or ".test." in fname or ".spec." in fname:
+                continue
+            path = os.path.join(root, fname)
+            content = read_file(path)
+            if content:
+                files[path] = content
     return files
 
 
 def find_test_files():
-    """Find all test files."""
+    """Find all test files (any language)."""
     files = {}
-    for py_file in glob.glob("**/test_*.py", recursive=True):
-        if any(skip in py_file for skip in ["venv/", ".venv/", "__pycache__"]):
-            continue
-        content = read_file(py_file)
-        if content:
-            files[py_file] = content
+    for root, dirs, filenames in os.walk("."):
+        dirs[:] = [d for d in dirs if d not in SKIP_DIRS]
+        for fname in filenames:
+            ext = os.path.splitext(fname)[1].lower()
+            if ext not in CODE_EXTENSIONS:
+                continue
+            if fname.startswith("test_") or fname.endswith("_test.py") or ".test." in fname or ".spec." in fname:
+                path = os.path.join(root, fname)
+                content = read_file(path)
+                if content:
+                    files[path] = content
     return files
 
 
@@ -126,7 +160,7 @@ def main():
     test_files = find_test_files()
 
     if not source_files:
-        print("ERROR: No Python source files found")
+        print("ERROR: No source code files found")
         sys.exit(1)
 
     print(f"Found {len(source_files)} source file(s): {', '.join(source_files.keys())}")
@@ -136,11 +170,13 @@ def main():
     prompt = f"## Specification\n\n{spec}\n\n"
     prompt += "## Source Code\n\n"
     for path, content in source_files.items():
-        prompt += f"### {path}\n```python\n{content}\n```\n\n"
+        ext = os.path.splitext(path)[1].lstrip(".")
+        prompt += f"### {path}\n```{ext}\n{content}\n```\n\n"
 
     prompt += "## Test Code\n\n"
     for path, content in test_files.items():
-        prompt += f"### {path}\n```python\n{content}\n```\n\n"
+        ext = os.path.splitext(path)[1].lstrip(".")
+        prompt += f"### {path}\n```{ext}\n{content}\n```\n\n"
 
     prompt += """
 ## Your Task
@@ -168,7 +204,12 @@ Be thorough — check every single requirement in the spec.
     print()
     print(separator)
 
-    # 7. Write to GitHub Actions step summary
+    # 7. Save report to file (for auto-fix to read later)
+    with open(".spec-report.md", "w", encoding="utf-8") as f:
+        f.write(analysis)
+    print("Report saved to .spec-report.md")
+
+    # 8. Write to GitHub Actions step summary
     summary_file = os.environ.get("GITHUB_STEP_SUMMARY")
     if summary_file:
         with open(summary_file, "a") as f:
@@ -177,7 +218,7 @@ Be thorough — check every single requirement in the spec.
             f.write("\n\n---\n*Auto-generated by spec analyzer*\n")
         print("Report written to GitHub Actions step summary.")
 
-    # 8. Exit with error if critical issues found
+    # 9. Exit with error if critical issues found
     lower = analysis.lower()
     if "critical" in lower and ("bug" in lower or "missing" in lower):
         print("\nSpec compliance check FAILED — critical issues found.")
