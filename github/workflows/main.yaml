@@ -1,0 +1,88 @@
+```yaml
+name: Build Push and Deploy using ArgoCD
+
+on:
+  push:
+    branches:
+      - main
+
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: write
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+
+    env:
+      IMAGE_NAME: add-task
+      IMAGE_NAME1: micro-ui
+
+      IMAGE_TAG: ${{ github.run_number }}
+      IMAGE_TAG1: ${{ github.run_number }}
+
+      ACR_NAME: devtodoacrwestus
+      ACR_LOGIN_SERVER: devtodoacrwestus.azurecr.io
+
+    steps:
+
+      # Checkout Code
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      # Azure Login using OIDC
+      - name: Azure Login
+        uses: Azure/login@v2
+        with:
+          client-id: 6c2702c6-118e-4640-aba9-86e61333ba0d
+          tenant-id: 1658eae6-9066-4c87-8f0e-22a840432c57
+          subscription-id: 20cadb7c-62d8-4c57-9b49-63ebd307c63e
+
+      # Login to Azure Container Registry
+      - name: Login to ACR
+        run: |
+          az acr login --name $ACR_NAME
+
+      # Build Add Service Image
+      - name: Build Add Image
+        run: |
+          docker build \
+            -t $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG \
+            -f app/Add/Dockerfile app
+
+      # Push Add Service Image
+      - name: Push Add Image
+        run: |
+          docker push $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG
+
+      # Build Micro UI Image
+      - name: Build Micro UI Image
+        run: |
+          docker build \
+            -t $ACR_LOGIN_SERVER/$IMAGE_NAME1:$IMAGE_TAG1 \
+            -f app/Micro/Dockerfile app/Micro
+
+      # Push Micro UI Image
+      - name: Push Micro UI Image
+        run: |
+          docker push $ACR_LOGIN_SERVER/$IMAGE_NAME1:$IMAGE_TAG1
+
+      # Update Kubernetes Deployment Manifest
+      - name: Update Deployment Manifest
+        run: |
+          sed -i "s|image:.*add-task.*|image: $ACR_LOGIN_SERVER/$IMAGE_NAME:$IMAGE_TAG|g" app/manifest/deployment.yaml
+
+      # Commit Updated Manifest
+      - name: Commit and Push Manifest Changes
+        run: |
+          git config --global user.email "github-actions@github.com"
+          git config --global user.name "github-actions"
+
+          git add app/manifest/deployment.yaml
+
+          git commit -m "Updated image tag to $IMAGE_TAG" || echo "No changes to commit"
+
+          git push
+```
