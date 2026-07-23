@@ -86,8 +86,12 @@ def find_source_files():
             path = os.path.join(root, fname)
             content = read_file(path)
             if content:
-                # Normalize path: remove leading ./
-                clean_path = path.lstrip("./").lstrip(".\\")
+                # Normalize path: remove leading ./ or .\
+                clean_path = path
+                if clean_path.startswith("./"):
+                    clean_path = clean_path[2:]
+                elif clean_path.startswith(".\\"):
+                    clean_path = clean_path[2:]
                 files[clean_path] = content
     return files
 
@@ -169,21 +173,35 @@ def get_last_spec_report():
             if not jobs or not jobs.get("jobs"):
                 continue
 
-            # Get logs for the job
+            # Get logs for the job — use redirect-safe download
             for job in jobs["jobs"]:
                 job_id = job["id"]
-                # Download job logs
                 log_url = f"https://api.github.com/repos/{REPO}/actions/jobs/{job_id}/logs"
-                req = urllib.request.Request(log_url, headers={
-                    "Authorization": f"Bearer {GITHUB_TOKEN}",
-                    "Accept": "application/vnd.github+json",
-                })
+
                 try:
-                    with urllib.request.urlopen(req) as resp:
+                    # Step 1: Get the redirect URL (don't follow automatically)
+                    opener = urllib.request.build_opener(urllib.request.HTTPRedirectHandler)
+                    req = urllib.request.Request(log_url, headers={
+                        "Authorization": f"Bearer {GITHUB_TOKEN}",
+                        "Accept": "application/vnd.github+json",
+                    })
+                    # Follow the redirect manually
+                    try:
+                        resp = opener.open(req)
                         log_text = resp.read().decode("utf-8", errors="replace")
+                    except urllib.error.HTTPError as redirect_err:
+                        if redirect_err.code in (301, 302):
+                            redirect_url = redirect_err.headers.get("Location")
+                            if redirect_url:
+                                req2 = urllib.request.Request(redirect_url)
+                                with urllib.request.urlopen(req2) as resp2:
+                                    log_text = resp2.read().decode("utf-8", errors="replace")
+                            else:
+                                raise
+                        else:
+                            raise
 
                     # Extract the report section from logs
-                    # Look for content between SPEC COMPLIANCE REPORT markers
                     start_marker = "SPEC COMPLIANCE REPORT"
                     end_marker = "Spec compliance check FAILED"
                     start_idx = log_text.find(start_marker)
@@ -195,7 +213,6 @@ def get_last_spec_report():
                         lines = report.split("\n")
                         cleaned = []
                         for line in lines:
-                            # Remove GitHub Actions timestamp prefix (e.g., "2024-01-01T00:00:00.000Z ")
                             cleaned_line = re.sub(r'^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d+Z\s*', '', line)
                             cleaned.append(cleaned_line)
                         report = "\n".join(cleaned)
@@ -218,6 +235,9 @@ def parse_fixed_files(ai_response):
     for filepath, content in matches:
         filepath = filepath.strip()
         content = content.strip()
+        # Remove markdown code fences if AI wrapped the content
+        content = re.sub(r'^```\w*\n', '', content)
+        content = re.sub(r'\n```$', '', content)
         files[filepath] = content
 
     return files
@@ -328,8 +348,9 @@ def main():
 
     # 2. Get the previous failure report (AI suggestions)
     report = get_last_spec_report()
+    has_real_report = report is not None
     if not report:
-        print("No previous spec compliance report found. Running fresh analysis...")
+        print("No previous spec compliance report found. Will do fresh analysis...")
         report = "No previous report available. Analyze the code against the spec and fix all issues."
 
     # 3. Find all source files
@@ -340,22 +361,35 @@ def main():
     print(f"Found {len(source_files)} source file(s)")
 
     # 4. Filter to files mentioned in the report (for large projects)
-    mentioned_files = {}
-    other_files = {}
-    for path, content in source_files.items():
-        # Check if this file or its name appears in the report
-        fname = os.path.basename(path)
-        if path in report or fname in report or path.replace("\\", "/") in report:
-            mentioned_files[path] = content
-        else:
-            other_files[path] = content
+    if has_real_report:
+        mentioned_files = {}
+        for path, content in source_files.items():
+            fname = os.path.basename(path)
+            if path in report or fname in report or path.replace("\\", "/") in report:
+                mentioned_files[path] = content
+        if not mentioned_files:
+            mentioned_files = source_files
+    else:
+        # No report — use SPEC.md to guess which files matter
+        # Filter to application code files mentioned in spec
+        mentioned_files = {}
+        for path, content in source_files.items():
+            fname = os.path.basename(path)
+            # Check if the filename or path appears in the spec
+            if fname in spec or path in spec or path.replace("\\", "/") in spec:
+                mentioned_files[path] = content
+        # If spec doesn't mention specific files, include non-infra code
+        if not mentioned_files:
+            infra_dirs = {"modules", "environments", "argocd", ".github", "node_modules"}
+            for path, content in source_files.items():
+                parts = path.replace("\\", "/").split("/")
+                if not any(d in infra_dirs for d in parts):
+                    mentioned_files[path] = content
+        if not mentioned_files:
+            mentioned_files = source_files
 
-    # If no files mentioned specifically, send all (small project)
-    if not mentioned_files:
-        mentioned_files = source_files
-
-    print(f"Files mentioned in report: {len(mentioned_files)}")
-    print(f"Files to fix: {', '.join(mentioned_files.keys())}")
+    print(f"Files to fix: {len(mentioned_files)}")
+    print(f"File list: {', '.join(mentioned_files.keys())}")
 
     # 5. Build the prompt
     prompt = "## SPEC.md (What the code should do)\n\n"
