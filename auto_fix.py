@@ -38,6 +38,9 @@ SKIP_DIRS = {
 
 SKIP_FILES = {"analyze_spec.py", "analyze_failure.py", "auto_fix.py"}
 
+# Directories whose files GITHUB_TOKEN cannot modify (security restriction)
+PROTECTED_DIRS = {".github"}
+
 SYSTEM_PROMPT = """You are a senior developer who fixes code to match a specification.
 
 You will receive:
@@ -268,6 +271,11 @@ def create_pull_request(fixed_files):
 
     # 3. Commit each fixed file to the branch
     for filepath, content in fixed_files.items():
+        # Skip protected directories (GITHUB_TOKEN can't modify workflow files)
+        parts = filepath.replace("\\", "/").split("/")
+        if any(d in PROTECTED_DIRS for d in parts):
+            print(f"  Skipping (protected): {filepath}")
+            continue
         print(f"  Updating: {filepath}")
 
         # Get current file SHA (if it exists)
@@ -380,10 +388,10 @@ def main():
                 mentioned_files[path] = content
         # If spec doesn't mention specific files, include non-infra code
         if not mentioned_files:
-            infra_dirs = {"modules", "environments", "argocd", ".github", "node_modules"}
+            skip_dirs = {"modules", "environments", "argocd", ".github", "node_modules"}
             for path, content in source_files.items():
                 parts = path.replace("\\", "/").split("/")
-                if not any(d in infra_dirs for d in parts):
+                if not any(d in skip_dirs for d in parts):
                     mentioned_files[path] = content
         if not mentioned_files:
             mentioned_files = source_files
