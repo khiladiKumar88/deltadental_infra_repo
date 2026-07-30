@@ -13,7 +13,7 @@ spec:
 
   destination:
     server: https://kubernetes.default.svc
-    namespace: argocd1   # jaha deploy chahiye
+    namespace: argocd   # corrected namespace to match deployment
 
   syncPolicy:
     automated:
